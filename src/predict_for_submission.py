@@ -74,6 +74,55 @@ def prepare_prediction_data(df, scaler):
     
     return X_scaled, df_features
 
+def predict_next_trading_day(model, scaler, days_back=30):
+    """
+    Predice el precio para el próximo día de trading usando los últimos N días
+    
+    Args:
+        model: Modelo entrenado
+        scaler: Scaler entrenado
+        days_back (int): Número de días hacia atrás para usar en la predicción
+    
+    Returns:
+        dict: Diccionario con la predicción y metadatos
+    """
+    # Cargar datos recientes (hasta hoy)
+    end_date = datetime.today().strftime('%Y-%m-%d')
+    start_date = (datetime.today() - timedelta(days=days_back + 10)).strftime('%Y-%m-%d')
+    
+    df = load_bitcoin_data(start_date=start_date, end_date=end_date, save_to_csv=False)
+    
+    # Preparar datos
+    X_scaled, df_features = prepare_prediction_data(df, scaler)
+    
+    # Usar los últimos datos disponibles para la predicción
+    X_latest = X_scaled.tail(1)
+    
+    # Hacer predicción
+    prediction = model.predict(X_latest)[0]
+    
+    # Obtener información del último día disponible
+    last_date = df_features.index[-1]
+    last_price = df_features['Close'].iloc[-1]
+    
+    # Calcular el próximo día de trading (día siguiente)
+    next_trading_day = last_date + timedelta(days=7)
+    
+    # Calcular cambio porcentual
+    price_change = ((prediction - last_price) / last_price) * 100
+    
+    result = {
+        'target_date': next_trading_day.strftime('%Y-%m-%d'),
+        'predicted_price': prediction,
+        'last_known_date': last_date,
+        'last_known_price': last_price,
+        'price_change_usd': prediction - last_price,
+        'price_change_percent': price_change,
+        'prediction_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    return result
+
 def predict_next_day(model, scaler, days_back=30):
     """
     Predice el precio del próximo día usando los últimos N días
@@ -145,7 +194,7 @@ def predict_multiple_days(model, scaler, n_days=7, days_back=30):
 
 def generate_submission_file(model_name="linear_regression", output_file="../submission.csv"):
     """
-    Genera un archivo de submission con predicciones
+    Genera un archivo de submission con predicciones para el próximo día de trading
     
     Args:
         model_name (str): Nombre del modelo a usar
@@ -155,13 +204,14 @@ def generate_submission_file(model_name="linear_regression", output_file="../sub
         # Cargar modelo
         model, scaler = load_trained_model(model_name)
         
-        # Generar predicción
-        prediction = predict_next_day(model, scaler)
+        # Generar predicción para el próximo día de trading
+        prediction = predict_next_trading_day(model, scaler)
         
         # Crear DataFrame de submission
         submission_df = pd.DataFrame([{
-            'date': prediction['prediction_date'],
+            'target_date': prediction['target_date'],
             'predicted_price': prediction['predicted_price'],
+            'last_known_date': prediction['last_known_date'],
             'last_known_price': prediction['last_known_price'],
             'price_change_percent': prediction['price_change_percent']
         }])
@@ -170,8 +220,10 @@ def generate_submission_file(model_name="linear_regression", output_file="../sub
         submission_df.to_csv(output_file, index=False)
         
         print(f"Archivo de submission generado: {output_file}")
-        print(f"Predicción para {prediction['prediction_date']}: ${prediction['predicted_price']:.2f}")
-        print(f"Cambio: {prediction['price_change_percent']:.2f}%")
+        print(f"Predicción para {prediction['target_date']}: ${prediction['predicted_price']:.2f}")
+        print(f"Basado en datos hasta: {prediction['last_known_date']}")
+        print(f"Último precio conocido: ${prediction['last_known_price']:.2f}")
+        print(f"Cambio predicho: {prediction['price_change_percent']:.2f}%")
         
         return submission_df
         
